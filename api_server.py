@@ -34,6 +34,7 @@ class CompareModelResponseDTO(BaseModel):
     model: str
     latency_ms: float
     output: str
+    input_length: int
     output_length: int
 
 
@@ -115,6 +116,7 @@ async def compare_with_model_one(
                 model=response.model,
                 latency_ms=response.latency_ms,
                 output=response.output,
+                input_length=response.input_length,
                 output_length=response.output_length
             )
         )
@@ -149,6 +151,7 @@ async def compare_with_model_two(
                 model=response.model,
                 latency_ms=response.latency_ms,
                 output=response.output,
+                input_length=response.input_length,
                 output_length=response.output_length
             )
         )
@@ -189,6 +192,7 @@ async def compare_both_models(
                 model=model_response.model,
                 latency_ms=model_response.latency_ms,
                 output=model_response.output,
+                input_length=model_response.input_length,
                 output_length=model_response.output_length
             )
         

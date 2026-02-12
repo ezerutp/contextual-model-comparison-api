@@ -30,6 +30,7 @@ class CompareModelResponse:
     model: str
     latency_ms: float
     output: str
+    input_length: int
     output_length: int
 
 
@@ -139,31 +140,33 @@ class AIModelComparator:
         model = genai.GenerativeModel(model_name=model_name)
         
         # Prepara el mensaje
+        model_input = prompt
         if allow_system_message:
             try:
                 model = genai.GenerativeModel(
                     model_name=model_name,
                     system_instruction=system_prompt
                 )
+                model_input = prompt
                 start_time = time.time()
-                response = model.generate_content(prompt)
+                response = model.generate_content(model_input)
                 end_time = time.time()
             except Exception as e:
                 self._raise_if_model_not_found(model_name, e)
-                full_prompt = f"{system_prompt}\n\n{prompt}"
+                model_input = f"{system_prompt}\n\n{prompt}"
                 start_time = time.time()
-                response = model.generate_content(full_prompt)
+                response = model.generate_content(model_input)
                 end_time = time.time()
         else:
             # Gemma no soporta system messages directamente
-            full_prompt = f"""Instrucciones:
+            model_input = f"""Instrucciones:
 {system_prompt}
 
 Prompt del usuario:
 {prompt}"""
             try:
                 start_time = time.time()
-                response = model.generate_content(full_prompt)
+                response = model.generate_content(model_input)
                 end_time = time.time()
             except Exception as e:
                 self._raise_if_model_not_found(model_name, e)
@@ -177,5 +180,6 @@ Prompt del usuario:
             model=model_name,
             latency_ms=latency_ms,
             output=output,
+            input_length=len(model_input),
             output_length=len(output) if output else 0
         )
