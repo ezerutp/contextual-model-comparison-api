@@ -185,7 +185,8 @@ Prompt del usuario:
         repo_context: str
     ) -> str:
         if self.max_input_tokens <= 0:
-            return user_prompt
+            # Sin limite: incluir siempre el contexto completo del repositorio.
+            return self._build_prompt_with_context(user_prompt, repo_context)
 
         prompt_with_context = self._build_prompt_with_context(user_prompt, repo_context)
         full_model_input = self._build_model_input(prompt_with_context, system_prompt, allow_system_message)
