@@ -6,8 +6,12 @@ from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, Any, Dict, List
 from ai_model_comparison import AIModelComparator, CompareModelRequest, CompareModelResponse
+from routers.evaluation import router as evaluation_router
 import os
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuración
 logging.basicConfig(level=logging.INFO)
@@ -134,6 +138,9 @@ app = FastAPI(
     description="API para comparar respuestas entre model one y model two",
     version="1.0.0"
 )
+
+# Incluir routers de extensiones
+app.include_router(evaluation_router)
 
 # Dependencia: inicializa el comparador ijiji
 def get_comparator() -> AIModelComparator:

@@ -50,6 +50,7 @@ class RepoContextProvider:
         try:
             with tempfile.NamedTemporaryFile(prefix="repomix-", suffix=".txt", delete=False) as tmp_file:
                 output_path = tmp_file.name
+            # Mejoramos el ignore para evitar archivos pesados o irrelevantes que puedan causar timeouts o exceder el token limit.
             subprocess.run(
                 [
                     "repomix",
@@ -57,11 +58,8 @@ class RepoContextProvider:
                     "--output",
                     output_path,
                     "--ignore",
-                    "repomix-output*,json,repomix-last-output.txt"
+                    "repomix-output*,json,repomix-last-output.txt"  
                 ],
-                capture_output=True,
-                text=True,
-                check=True
             )
             with open(output_path, "r", encoding="utf-8") as f:
                 context = f.read()
@@ -110,7 +108,8 @@ class AIModelComparator:
         self.model_name_one = os.getenv("MODEL_NAME_ONE") or os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
         self.model_name_two = os.getenv("MODEL_NAME_TWO") or os.getenv("GEMMA_MODEL_NAME", "gemma-3-27b-it")
         self.default_repo_path = default_repo_path
-        self.max_input_tokens = int(os.getenv("MAX_INPUT_TOKENS", "10000"))
+        # De todas maneras, usa 10000. 
+        self.max_input_tokens = int(os.getenv("MAX_INPUT_TOKENS", "0"))
 
     def compare_with_model_one(self, request: CompareModelRequest) -> CompareModelResponse:
         return self._run_prompt(request, self.model_name_one, allow_system_message=True)
