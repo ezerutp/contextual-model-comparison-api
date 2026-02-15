@@ -565,3 +565,22 @@ Para preguntas o issues:
 2. Consultar docstrings en código
 3. Revisar logs de stderr/stdout
 4. Verificar formato de dataset/repo_path
+
+### Cositas para aclarar en base a las métricas obtenidas 
+
+En discriminación, sale:
+- mean_score (la media p)
+- score_gap (la diferencia promedio entre los repos buenos y malos)
+- Mann-Whitney U (no hacer caso, como el modelo realiza clasificación binaria, este número se encuentra contaminado con el criterio adicional (review))
+- p_value va a la par con Mann-Whitney U, es la probabilidad de cuánto esa diferencia de medias sea accidental.
+- overlap_coefficient: 0.0 es separacion perfecta, 1.0 es que ambos grupos son indistinguibles.
+
+En clasificacion:
+- TP (True positives)
+- TN (True Negatives)
+- FP (False Positives)
+- FN (False negatives)
+
+# Critico:
+- El sistema muestra bajo accuracy y precision. Esto se debe a los puntajes clasificados como review (quiza falta calibrar mejor la rubrica, toda revisarlo)
+- En general el modelo clasifica muy bien, pero toda aclarar el tema de la rubrica. 

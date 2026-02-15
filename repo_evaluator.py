@@ -29,18 +29,27 @@ from prompts.evaluation_prompt import (
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Schema estricto para forzar el formato de respuesta del modelo
-# Gemini respeta este schema a nivel de API — más confiable que cualquier
-# instrucción en el prompt.
-# ─────────────────────────────────────────────────────────────────────────────
 CRITERION_BOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "value":    {"type": "boolean"},
         "evidence": {"type": "string"},
+        "verification": {
+            "type": "string",
+            "enum": ["SUPPORTED", "WEAK", "UNSUPPORTED", "CONTRADICTS", "N/A"],
+        },
+        "flag_type": {
+            "type": "string",
+            "enum": [
+                "none",                  # sin problema 
+                "low_evidence",
+                "unsupported_claim",
+                "fabricated_file",
+                "contradicts_context",
+            ],
+        },
     },
-    "required": ["value", "evidence"],
+    "required": ["value", "evidence", "verification", "flag_type"],
 }
 
 CRITERION_STRING_SCHEMA = {
@@ -187,7 +196,6 @@ class RepoEvaluator:
         try:
             evaluation_json = json.loads(raw_text)
         except json.JSONDecodeError as e:
-            # No debería pasar con response_schema, pero por si acaso
             logger.error(f"JSON inválido en {candidate_id}: {e}")
             logger.error(f"Raw (500 chars): {raw_text[:500]}")
             raise ValueError(f"Respuesta no es JSON válido: {e}")
@@ -199,6 +207,7 @@ class RepoEvaluator:
             latency_ms=latency_ms,
             model_response=model_response,
             raw_llm_output=raw_text,
+            repo_context=repo_context,          # [CHANGE 1] pasar repo_context
         )
 
         logger.info(
@@ -209,11 +218,6 @@ class RepoEvaluator:
         return result
 
     def _call_gemini(self, user_prompt: str):
-        """
-        Llama a Gemini con response_schema para garantizar estructura fija.
-        response_mime_type + response_schema es la combinación correcta:
-        el modelo no puede devolver otro formato.
-        """
         model = genai.GenerativeModel(
             model_name=self.model_name,
             system_instruction=SYSTEM_PROMPT,
@@ -312,6 +316,7 @@ class RepoEvaluator:
         latency_ms: float,
         model_response: Any,
         raw_llm_output: str = "",
+        repo_context: str = "",             # [CHANGE 2] nueva firma
     ) -> EvaluationResult:
 
         backend_data  = evaluation_json.get("backend",  {})
@@ -331,7 +336,8 @@ class RepoEvaluator:
             decision = "FAIL"
 
         llm_metrics = self._calculate_hallucination_metrics(
-            backend_data, frontend_data, other_data
+            backend_data, frontend_data, other_data,
+            repo_context=repo_context,      # [CHANGE 2] pasar hacia abajo
         )
 
         prompt_tokens = 0
@@ -381,6 +387,7 @@ class RepoEvaluator:
         backend_data: Dict,
         frontend_data: Dict,
         other_data: Dict,
+        repo_context: str = "",             # [CHANGE 3] nueva firma
     ) -> LLMMetrics:
         all_data = [
             ("backend",  backend_data),
@@ -388,33 +395,56 @@ class RepoEvaluator:
             ("other",    other_data),
         ]
         hallucination_flags   = []
-        true_criteria         = []
         low_evidence_criteria = []
+        total_penalty         = 0.0
+        total_possible        = 0.0
+
+        SEVERITY = {
+            "SUPPORTED":   0.0,
+            "WEAK":        0.4,
+            "UNSUPPORTED": 1.0,
+            "CONTRADICTS": 1.5,
+        }
 
         for category_name, category_data in all_data:
             rubric_cat = RUBRICA.get(category_name, {})
             for criterion_name, criterion_data in category_data.items():
                 if not isinstance(criterion_data, dict):
                     continue
+
                 value    = criterion_data.get("value")
                 peso     = rubric_cat.get(criterion_name, {}).get("peso", 0)
                 evidence = criterion_data.get("evidence", "").strip()
 
-                if value is True and peso > 0:
-                    true_criteria.append(criterion_name)
-                    if (
-                        not evidence
-                        or len(evidence) < 15
-                        or evidence.lower() in [
-                            "n/a", "no aplica", "no encontrado", "sí", "si", "yes"
-                        ]
-                    ):
-                        hallucination_flags.append(criterion_name)
-                        low_evidence_criteria.append(criterion_name)
+                if value is not True or peso == 0:
+                    continue
+
+                total_possible += peso
+
+                # [CHANGE 4] override local si la evidencia no existe en el repo
+                verification = criterion_data.get("verification", "N/A")
+                flag_type    = criterion_data.get("flag_type", "").strip()
+
+                if evidence and not _evidence_exists(evidence, repo_context):
+                    verification = "UNSUPPORTED"
+                    flag_type    = "fabricated_file"
+                    logger.debug(
+                        f"  [fabricated_file] {criterion_name}: "
+                        f"evidence '{evidence[:60]}' not found in repo_context"
+                    )
+
+                severity       = SEVERITY.get(verification, 0.0)
+                total_penalty += severity * peso
+
+                if severity > 0 and flag_type and flag_type != "none":
+                    hallucination_flags.append(flag_type)
+
+                if verification == "WEAK":
+                    low_evidence_criteria.append(criterion_name)
 
         hallucination_score = (
-            round(len(hallucination_flags) / len(true_criteria), 3)
-            if true_criteria else 0.0
+            round(min(total_penalty / total_possible, 1.0), 3)
+            if total_possible > 0 else 0.0
         )
         return LLMMetrics(
             hallucination_flags=hallucination_flags,
@@ -441,3 +471,44 @@ class RepoEvaluator:
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         return len(text) // 4
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [CHANGE 4] Función utilitaria local — sin dependencias externas
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _evidence_exists(evidence: str, repo_context: str) -> bool:
+    """
+    Verifica que al menos un token significativo de `evidence` aparezca
+    como substring en `repo_context`. Búsqueda puramente local, sin red.
+
+    Estrategia:
+      1. Tokeniza `evidence` dividiendo por espacios y separadores comunes.
+      2. Descarta tokens < 4 chars (muy cortos → demasiadas coincidencias
+         accidentales: "the", "src", "get", etc.).
+      3. Devuelve True con el primer token que aparezca en repo_context.
+      4. Fallback: si la evidence completa (stripped) tiene > 10 chars,
+         prueba la cadena completa como substring.
+
+    No lanza excepciones: si repo_context está vacío devuelve True para
+    no penalizar cuando no hubo contexto disponible.
+    """
+    if not evidence:
+        return False
+
+    if not repo_context:
+        return True  # sin contexto no podemos verificar → beneficio de la duda
+
+    # Tokenizar por separadores típicos en paths y nombres de código
+    tokens = re.split(r"[\s/\\.,;:()\[\]{}'\"]+", evidence)
+    meaningful = [t for t in tokens if len(t) >= 4]
+
+    for token in meaningful:
+        if token in repo_context:
+            return True
+
+    # Fallback con la evidence completa
+    if len(evidence) > 10 and evidence.strip() in repo_context:
+        return True
+
+    return False

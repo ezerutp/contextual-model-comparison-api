@@ -28,6 +28,37 @@ REGLAS ABSOLUTAS:
    sin texto adicional, sin markdown, sin bloques de código.
 """
 
+
+
+""" Ahora en este apartado, se va a detallar prompts para autoevaluacion del LLM """
+
+
+
+SYSTEM_PROMPT_ADDITION = """
+AUTO-VERIFICACIÓN (campos verification y flag_type):
+Para CADA criterio booleano que marques como true, completá también:
+
+  verification: ¿Tu evidencia está realmente en el código del repo?
+    - SUPPORTED   → Podés citar archivo + clase/función concreta.
+    - WEAK        → Tu evidencia es vaga ("parece", "hay algunos", sin archivo).
+    - UNSUPPORTED → Afirmaste true pero no encontrás el archivo/clase en el contexto.
+    - CONTRADICTS → El repo tiene evidencia que contradice tu afirmación.
+
+  flag_type: tipo de problema (vacío "" si SUPPORTED):
+    - ""                   → sin problema
+    - "low_evidence"       → cuando verification=WEAK
+    - "unsupported_claim"  → cuando afirmaste algo que no está en el repo
+    - "fabricated_file"    → cuando citás un archivo que no aparece en el contexto
+    - "contradicts_context"→ cuando el repo contradice tu afirmación
+
+Para criterios marcados como false → verification="N/A", flag_type="".
+
+REGLA CLAVE: Si al completar verification notás que en realidad no tenés
+evidencia concreta, cambiá value a false. La verificación es tu última
+oportunidad de corregirte antes de emitir el resultado.
+"""
+
+
 USER_PROMPT_TEMPLATE = """
 Evaluá el siguiente repositorio de código de un candidato.
 Seguí estrictamente la rúbrica y devolvé el JSON de evaluación.
